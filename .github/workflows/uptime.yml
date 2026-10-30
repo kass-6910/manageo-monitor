@@ -1,0 +1,63 @@
+name: Surveillance manageo.site
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+env:
+  URL: https://manageo.site/api/health
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Tester le site (3 essais)
+        id: probe
+        run: |
+          for i in 1 2 3; do
+            body=$(curl -sS --max-time 15 -w '\n%{http_code}' "$URL" 2>&1) || body=""
+            code=$(printf '%s' "$body" | tail -n1)
+            if [ "$code" = "200" ] && printf '%s' "$body" | grep -q '"ok":true'; then
+              echo "up=true" >> "$GITHUB_OUTPUT"
+              echo "Site OK (essai $i)"
+              exit 0
+            fi
+            echo "Essai $i : échec (code=$code)"
+            sleep 20
+          done
+          echo "up=false" >> "$GITHUB_OUTPUT"
+
+      - name: Ouvrir ou fermer l'incident
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          UP: ${{ steps.probe.outputs.up }}
+        run: |
+          open=$(gh issue list --state open --label site-down --json number --jq '.[0].number // empty')
+          now=$(date -u '+%Y-%m-%d %H:%M UTC')
+          if [ "$UP" = "true" ]; then
+            if [ -n "$open" ]; then
+              gh issue comment "$open" --body "Le site répond de nouveau ($now)."
+              gh issue close "$open"
+            fi
+          else
+            if [ -z "$open" ]; then
+              gh label create site-down --color B60205 --description "manageo.site injoignable" 2>/dev/null || true
+              gh issue create --label site-down \
+                --title "manageo.site est injoignable" \
+                --body "$URL ne répond pas correctement depuis $now (3 essais échoués). Cette issue se ferme toute seule au retour du site."
+            fi
+          fi
+
+      - name: Faire échouer le run si le site est tombé
+        if: steps.probe.outputs.up != 'true'
+        run: exit 1
