@@ -4,6 +4,10 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      url:
+        description: "URL à tester (vide = manageo.site, sert à simuler une panne)"
+        required: false
 
 permissions:
   issues: write
@@ -13,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  URL: https://manageo.site/api/health
+  URL: ${{ inputs.url || 'https://manageo.site/api/health' }}
 
 jobs:
   check:
